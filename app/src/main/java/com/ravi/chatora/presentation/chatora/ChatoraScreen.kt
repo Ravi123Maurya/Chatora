@@ -1,6 +1,7 @@
 package com.ravi.chatora.presentation.chatora
 
 import android.Manifest
+import android.content.ClipData
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.BackHandler
@@ -18,7 +19,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,12 +30,14 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -40,8 +45,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.DrawStyle
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -49,6 +58,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextIndent
@@ -65,6 +75,7 @@ import com.ravi.chatora.presentation.chatora.components.VoiceChatDialog
 import com.ravi.chatora.presentation.chatora.components.VoiceChatoraViewModel
 import com.ravi.chatora.presentation.chatorahistory.ChatoraHistory
 import com.ravi.chatora.ui.theme.AppColors
+import com.ravi.chatora.utils.copyToClip
 import com.ravi.chatora.utils.showToast
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -471,6 +482,9 @@ fun ChatBubble(
     val scope = rememberCoroutineScope()
 
 
+    val clipboard = LocalClipboard.current
+    val context = LocalContext.current
+
     val swipeState = rememberSwipeToDismissBoxState(
         confirmValueChange = {
             if (it != SwipeToDismissBoxValue.Settled && !hasSwiped) {
@@ -604,16 +618,40 @@ fun ChatBubble(
 
                                 Spacer(modifier = Modifier.height(4.dp))
 
-                                Text(
-                                    text = message.timeStamp,
-                                    fontSize = 11.sp,
-                                    color = if (message.isUser) {
-                                        AppColors.OnPrimary.copy(alpha = 0.7f)
-                                    } else {
-                                        AppColors.OnSurfaceVariant
-                                    },
-                                    modifier = Modifier.align(Alignment.End)
-                                )
+                                Row(
+                                    modifier = Modifier.align(Alignment.End),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+
+                                    if (!message.isUser) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.ContentCopy,
+                                            contentDescription = "Copy contents",
+                                            modifier = Modifier
+                                                .padding(horizontal = 12.dp)
+                                                .size(20.dp)
+                                                .clickable {
+                                                    context.copyToClip(
+                                                        clipboard,
+                                                        message.message,
+                                                        scope
+                                                    )
+                                                    context.showToast("Copied")
+                                                },
+                                            tint = Color.Black.copy(alpha = 0.5f)
+                                        )
+                                    }
+                                    Text(
+                                        text = message.timeStamp,
+                                        fontSize = 11.sp,
+                                        color = if (message.isUser) {
+                                            AppColors.OnPrimary.copy(alpha = 0.7f)
+                                        } else {
+                                            AppColors.OnSurfaceVariant
+                                        },
+
+                                        )
+                                }
                             }
                         }
                     }
@@ -625,104 +663,257 @@ fun ChatBubble(
 
 }
 
+
+// ── Segment model ─────────────────────────────────────────────────────────────
+
+sealed class Segment {
+    data class Markdown(val content: String) : Segment()
+    data class CodeBlock(val language: String, val code: String) : Segment()
+}
+
+fun parseSegments(input: String): List<Segment> {
+    val result = mutableListOf<Segment>()
+    val fenceRegex = Regex("""```(\w*)\n([\s\S]*?)```""")
+    var lastEnd = 0
+
+    fenceRegex.findAll(input).forEach { match ->
+        if (match.range.first > lastEnd) {
+            result += Segment.Markdown(input.substring(lastEnd, match.range.first))
+        }
+        result += Segment.CodeBlock(
+            language = match.groupValues[1].ifEmpty { "code" },
+            code = match.groupValues[2].trimEnd()
+        )
+        lastEnd = match.range.last + 1
+    }
+
+    if (lastEnd < input.length) {
+        result += Segment.Markdown(input.substring(lastEnd))
+    }
+
+    return result
+}
+
+// ── Main composable ───────────────────────────────────────────────────────────
+
 @Composable
 fun MarkdownText(
     message: Chatora,
     modifier: Modifier = Modifier
 ) {
+    val segments = parseSegments(message.message)
+    val isUser = message.isUser
 
-    val markdownText = message.message
+    val textColor = if (isUser) AppColors.OnPrimary else AppColors.OnSurface
 
-    // Define the styles you want to apply
-    val headingStyle = SpanStyle(
-        fontSize = 24.sp,
-        fontWeight = FontWeight.Bold
-    )
-    val boldStyle = SpanStyle(
-        fontWeight = FontWeight.Bold,
-        color = AppColors.Primary // Or any color you like
-    )
-    val bulletParagraphStyle = ParagraphStyle(
-        textIndent = TextIndent(restLine = 28.sp)
-    )
-
-    // The core logic: build the AnnotatedString
-    val annotatedString = buildAnnotatedString {
-        // Split the text by lines to process each one
-        val lines = markdownText.lines()
-
-        lines.forEach { line ->
-            when {
-                // Rule 1: Headline
-                line.startsWith("## ") || line.startsWith("### ") -> {
-                    withStyle(style = headingStyle) {
-                        // Append the text after "## "
-                        append(line.substring(3) + "\n\n")
-                    }
+    Column(modifier = modifier) {
+        segments.forEach { segment ->
+            when (segment) {
+                is Segment.CodeBlock -> {
+                    Spacer(Modifier.height(8.dp))
+                    CodeBlockView(
+                        language = segment.language,
+                        code = segment.code
+                    )
+                    Spacer(Modifier.height(8.dp))
                 }
 
-                // Rule 2: Bullet Point
-                line.startsWith("* ") -> {
-                    withStyle(style = bulletParagraphStyle) {
-                        append("  •  ") // Append bullet character
-                        // Process the rest of the line for other styles (like bold)
-
-                        processInlineStyles(line.substring(2), boldStyle)
-                        append("\n") // Add a newline after the bullet point
+                is Segment.Markdown -> {
+                    val annotated = buildMarkdownAnnotatedString(
+                        text = segment.content,
+                        textColor = textColor
+                    )
+                    if (annotated.text.isNotBlank()) {
+                        Text(
+                            text = annotated,
+                            fontSize = 15.sp,
+                            color = textColor,
+                            lineHeight = 22.sp
+                        )
                     }
-                }
-
-                // Rule 3: Regular Paragraph
-                else -> {
-                    // Process the line for any inline styles (like bold)
-                    processInlineStyles(line, boldStyle)
-                    append("\n") // Treat as a paragraph break
                 }
             }
         }
     }
-
-
-
-    Text(
-        modifier = Modifier,
-        text = annotatedString,
-        fontSize = 15.sp,
-        color = if (message.isUser) AppColors.OnPrimary else AppColors.OnSurface,
-        lineHeight = 20.sp,
-    )
-
-
 }
 
+// ── Code block UI ─────────────────────────────────────────────────────────────
+
+@Composable
+fun CodeBlockView(language: String, code: String) {
+
+    val context = LocalContext.current
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+
+    val bgColor = Color(0xFFD5E4FA)   // dark navy
+    val headerColor = Color(0xFFBECDFA)   // slightly lighter for header bar
+    val borderColor = Color(0xFF3A3A55)
+    val codeColor = Color(0xFF343846)   // soft white-blue (Catppuccin Mocha text)
+    val labelColor = Color(0xFF2B4B67)   // blue accent for language tag
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(bgColor)
+    ) {
+        // ── Header bar ──
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(headerColor)
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = language.lowercase(),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = labelColor,
+                fontFamily = FontFamily.Monospace
+            )
+
+            Row(
+                modifier = Modifier
+                    .clickable {
+                        context.copyToClip(clipboard, code, scope)
+                        context.showToast("Copied")
+                    },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.ContentCopy,
+                    contentDescription = "Copy contents",
+                    modifier = Modifier
+                        .padding(horizontal = 12.dp)
+                        .size(18.dp),
+                    tint = Color.Black,
+                )
+                Text(
+                    text = "Copy code",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = Color.Black,
+                )
+            }
+        }
+
+        HorizontalDivider(color = borderColor, thickness = 0.5.dp)
+
+        // ── Code content ──
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 14.dp, vertical = 12.dp)
+        ) {
+            Text(
+                text = code,
+                fontSize = 13.sp,
+                fontFamily = FontFamily.Monospace,
+                color = codeColor,
+                lineHeight = 20.sp,
+                softWrap = false   // let horizontal scroll handle long lines
+            )
+        }
+    }
+}
+
+// ── Markdown AnnotatedString builder ─────────────────────────────────────────
+
+fun buildMarkdownAnnotatedString(
+    text: String,
+    textColor: Color
+): AnnotatedString {
+    val headingStyle = SpanStyle(
+        fontSize = 20.sp,
+        fontWeight = FontWeight.Bold,
+        color = textColor
+    )
+    val boldStyle = SpanStyle(
+        fontWeight = FontWeight.Bold,
+        color = AppColors.Primary
+    )
+    val inlineCodeStyle = SpanStyle(
+        fontFamily = FontFamily.Monospace,
+        fontSize = 13.sp,
+        background = Color(0xFFC3E6F8),
+        color = Color(0xFF28364B)
+    )
+    val bulletParagraph = ParagraphStyle(
+        textIndent = TextIndent(restLine = 4.sp)
+    )
+
+    return buildAnnotatedString {
+        val lines = text.trimEnd().lines()
+
+        lines.forEachIndexed { index, line ->
+            val trimmed = line.trim()
+
+            when {
+                // H2 / H3 heading
+                trimmed.startsWith("## ") || trimmed.startsWith("### ") -> {
+                    val content = trimmed.removePrefix("### ").removePrefix("## ")
+                    withStyle(headingStyle) { append(content) }
+                    append("\n")
+                }
+
+                // Bullet: "* " or "- "
+                trimmed.startsWith("* ") || trimmed.startsWith("- ") -> {
+                    val content = trimmed.removePrefix("* ").removePrefix("- ")
+                    withStyle(bulletParagraph) {
+                        append("\u2022 ")   // proper bullet character
+                        processInlineStyles(content, boldStyle, inlineCodeStyle)
+                    }
+                    append("\n")
+                }
+
+                // Blank line → paragraph gap
+                trimmed.isEmpty() -> append("\n")
+
+                // Regular line
+                else -> {
+                    processInlineStyles(trimmed, boldStyle, inlineCodeStyle)
+                    if (index < lines.lastIndex) append("\n")
+                }
+            }
+        }
+    }
+}
+
+// ── Inline bold + inline-code processor ──────────────────────────────────────
 
 private fun AnnotatedString.Builder.processInlineStyles(
     text: String,
-    boldStyle: SpanStyle
+    boldStyle: SpanStyle,
+    inlineCodeStyle: SpanStyle
 ) {
-    // Regex to find text wrapped in double asterisks, e.g., **text**
-    val boldRegex = """\*\*(.*?)\*\*""".toRegex()
-
+    val pattern = Regex("""\*\*(.*?)\*\*|`([^`]+)`""")
     var lastIndex = 0
-    boldRegex.findAll(text).forEach { matchResult ->
-        // 1. Append the text before the bold part
-        append(text.substring(lastIndex, matchResult.range.first))
 
-        // 2. Append the bold text with style
-        withStyle(style = boldStyle) {
-            append(matchResult.groupValues[1]) // groupValues[1] is the text inside **...**
+    pattern.findAll(text).forEach { match ->
+        if (match.range.first > lastIndex) {
+            append(text.substring(lastIndex, match.range.first))
         }
+        when {
+            match.groupValues[1].isNotEmpty() -> withStyle(boldStyle) {
+                append(match.groupValues[1])
+            }
 
-        // 3. Update the last processed index
-        lastIndex = matchResult.range.last + 1
+            match.groupValues[2].isNotEmpty() -> withStyle(inlineCodeStyle) {
+                append(" ${match.groupValues[2]} ")
+            }
+        }
+        lastIndex = match.range.last + 1
     }
 
-    // 4. Append any remaining text after the last bold part
     if (lastIndex < text.length) {
         append(text.substring(lastIndex))
     }
 }
-
 
 @Composable
 fun SwipeBackground(
