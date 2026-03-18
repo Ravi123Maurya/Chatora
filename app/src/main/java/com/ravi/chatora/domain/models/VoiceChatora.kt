@@ -11,12 +11,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 
-data class VoiceChatora(
-    val id: Int,
-    val spokenText: String
-)
-
-
 data class VoiceState(
     val isSpeaking: Boolean = false,
     val spokenText: String = "",

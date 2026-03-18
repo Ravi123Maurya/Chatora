@@ -20,7 +20,9 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement
@@ -38,20 +40,25 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.DrawStyle
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.AnnotatedString
@@ -64,6 +71,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -213,7 +221,10 @@ fun ChatoraScreen(
                                 reverseLayout = true,
                                 verticalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
-                                itemsIndexed(chatUiState.reversed()) { index, message ->
+                                itemsIndexed(
+                                    items = chatUiState.reversed(),
+                                    key = { i, message -> message.id }
+                                ) { index, message ->
                                     val shouldAnimate =
                                         index == 0 && message.isUser && lastAnimatedMessageId != message.id.toLong()
 
@@ -232,7 +243,7 @@ fun ChatoraScreen(
                                                 delay(500)
                                                 chatoraViewModel.deleterChatora(message.id)
                                             }
-                                            context.showToast("Delete")
+                                            context.showToast("Deleted")
                                         }
                                     )
 
@@ -247,6 +258,12 @@ fun ChatoraScreen(
 
             1 -> {
                 ChatoraHistory(
+                    history = listOf(),
+                    onHistoryClick = {
+                        coroutineScope.launch {
+                            pagerState.animateScrollToPage(pagerState.currentPage - 1)
+                        }
+                    },
                     onBackClick = {
                         coroutineScope.launch {
                             pagerState.animateScrollToPage(pagerState.currentPage - 1)
@@ -280,7 +297,7 @@ fun ChatoraScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatoraTopBar(modifier: Modifier, onMenuClick: () -> Unit) {
+fun ChatoraTopBar(modifier: Modifier = Modifier, onMenuClick: () -> Unit = {}) {
 
     val context = LocalContext.current
 
@@ -329,7 +346,7 @@ fun ChatoraTopBar(modifier: Modifier, onMenuClick: () -> Unit) {
                     onMenuClick()
                 }) {
                 Icon(
-                    imageVector = Icons.Default.ArrowBackIosNew,
+                    imageVector = Icons.Rounded.Menu,
                     contentDescription = "More",
                     tint = AppColors.OnSurface
                 )
@@ -398,7 +415,7 @@ fun ChatoraBottomBar(
                 ),
                 maxLines = 4,
                 trailingIcon = {
-                    Row(Modifier.padding(8.dp, 24.dp)) {
+                    Row(Modifier.padding(start = 8.dp, end = 8.dp , top = 24.dp, bottom = 8.dp)) {
 
                         IconButton(
                             modifier = Modifier
@@ -408,7 +425,7 @@ fun ChatoraBottomBar(
                             onClick = {
                                 hasMicClicked = true
                                 onVoiceChatClick()
-                            }// TODO: Add Voice Chat Feature
+                            }
                         ) {
                             if (hasMicClicked) {
                                 CircularProgressIndicator(
@@ -476,25 +493,16 @@ fun ChatBubble(
     onDeleteClick: () -> Unit = {}
 ) {
 
+    var pressOffset by remember { mutableStateOf(Offset.Zero) }
+    var showMenu by remember { mutableStateOf(false) }
     var hasDeleteConfirmed by remember { mutableStateOf(false) }
-    var hasSwiped by remember { mutableStateOf(false) }
-    val hapticFeedback = LocalHapticFeedback.current
+
+
     val scope = rememberCoroutineScope()
-
-
     val clipboard = LocalClipboard.current
     val context = LocalContext.current
+    val density = LocalDensity.current
 
-    val swipeState = rememberSwipeToDismissBoxState(
-        confirmValueChange = {
-            if (it != SwipeToDismissBoxValue.Settled && !hasSwiped) {
-                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                hasSwiped = true
-            }
-            true
-        },
-        positionalThreshold = { distance -> distance * 0.6f }
-    )
 
     val alphaAnim =
         remember { Animatable(if (shouldAnimate && message.isUser) 0f else 1f) }
@@ -528,10 +536,6 @@ fun ChatBubble(
         }
     }
 
-    LaunchedEffect(Unit) {
-        hasSwiped = false
-        swipeState.reset()
-    }
     Box(
         modifier = Modifier
             .graphicsLayer {
@@ -541,6 +545,15 @@ fun ChatBubble(
                 translationY = offsetYAnim.value
                 translationX = offsetXAnim.value
             }
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onLongPress = { offset ->
+                        // offset here is ALREADY relative to this Box — perfect
+                        pressOffset = offset
+                        showMenu = true
+                    }
+                )
+            }
     ) {
         AnimatedVisibility(
             visible = !hasDeleteConfirmed,
@@ -549,116 +562,109 @@ fun ChatBubble(
                 shrinkTowards = Alignment.Top
             )
         ) {
-            SwipeToDismissBox(
-                modifier = Modifier.fillMaxWidth(),
-                state = swipeState,
-                backgroundContent = {
-                    if (hasSwiped) {
-                        SwipeBackground(
-                            modifier = Modifier.fillMaxSize(),
-                            onCancelClick = {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                scope.launch {
-                                    hasSwiped = false
-                                    swipeState.reset()
-                                }
-                            },
-                            onDeleteClick = {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                scope.launch {
-                                    delay(500)
-                                    onDeleteClick()
-                                    hasDeleteConfirmed = true
-                                }
-                            }
-                        )
-                    }
-
-
-                },
-                enableDismissFromEndToStart = message.isUser,
-                enableDismissFromStartToEnd = !message.isUser
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+                horizontalArrangement = if (message.isUser) Arrangement.End else Arrangement.Start
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = if (message.isUser) 16.dp else 8.dp, end = 16.dp),
-                    horizontalArrangement = if (message.isUser) Arrangement.End else Arrangement.Start
+                Surface(
+                    shape = RoundedCornerShape(
+                        topStart = 16.dp,
+                        topEnd = 16.dp,
+                        bottomStart = if (message.isUser) 16.dp else 4.dp,
+                        bottomEnd = if (message.isUser) 4.dp else 16.dp
+                    ),
+                    color = if (message.isUser) AppColors.Primary else AppColors.SurfaceContainerHigh,
+                    shadowElevation = 1.dp,
+                    modifier = if (message.isUser) Modifier.widthIn(max = 280.dp) else Modifier.weight(
+                        1f
+                    )
                 ) {
-                    if (!message.isUser) {
-                        Icon(
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(AppColors.Primary.copy(alpha = 0.1f)),
-                            imageVector = Icons.Default.AcUnit,
-                            contentDescription = "",
-                            tint = AppColors.Primary
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                    }
-                    Surface(
-                        shape = RoundedCornerShape(
-                            topStart = 16.dp,
-                            topEnd = 16.dp,
-                            bottomStart = if (message.isUser) 16.dp else 4.dp,
-                            bottomEnd = if (message.isUser) 4.dp else 16.dp
-                        ),
-                        color = if (message.isUser) AppColors.Primary else AppColors.SurfaceContainerHigh,
-                        shadowElevation = 1.dp,
-                        modifier = if (message.isUser) Modifier.widthIn(max = 280.dp) else Modifier.weight(
-                            1f
-                        )
-                    ) {
-                        SelectionContainer {
-                            Column(
-                                modifier = Modifier.padding(12.dp)
+                    SelectionContainer {
+                        Column(
+                            modifier = Modifier.padding(12.dp)
+                        ) {
+
+                            MarkdownText(message)
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            Row(
+                                modifier = Modifier.align(Alignment.End),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
 
-                                MarkdownText(message)
-
-                                Spacer(modifier = Modifier.height(4.dp))
-
-                                Row(
-                                    modifier = Modifier.align(Alignment.End),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-
-                                    if (!message.isUser) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.ContentCopy,
-                                            contentDescription = "Copy contents",
-                                            modifier = Modifier
-                                                .padding(horizontal = 12.dp)
-                                                .size(20.dp)
-                                                .clickable {
-                                                    context.copyToClip(
-                                                        clipboard,
-                                                        message.message,
-                                                        scope
-                                                    )
-                                                    context.showToast("Copied")
-                                                },
-                                            tint = Color.Black.copy(alpha = 0.5f)
-                                        )
-                                    }
-                                    Text(
-                                        text = message.timeStamp,
-                                        fontSize = 11.sp,
-                                        color = if (message.isUser) {
-                                            AppColors.OnPrimary.copy(alpha = 0.7f)
-                                        } else {
-                                            AppColors.OnSurfaceVariant
-                                        },
-
-                                        )
+                                if (!message.isUser) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.ContentCopy,
+                                        contentDescription = "Copy contents",
+                                        modifier = Modifier
+                                            .padding(horizontal = 12.dp)
+                                            .size(20.dp)
+                                            .clickable {
+                                                context.copyToClip(
+                                                    clipboard,
+                                                    message.message,
+                                                    scope
+                                                )
+                                                context.showToast("Copied")
+                                            },
+                                        tint = Color.Black.copy(alpha = 0.5f)
+                                    )
                                 }
+                                Text(
+                                    text = message.timeStamp,
+                                    fontSize = 11.sp,
+                                    color = if (message.isUser) {
+                                        AppColors.OnPrimary.copy(alpha = 0.7f)
+                                    } else {
+                                        AppColors.OnSurfaceVariant
+                                    },
+
+                                    )
                             }
                         }
                     }
                 }
             }
         }
+
+        DropdownMenu(
+            expanded = showMenu,
+            onDismissRequest = { showMenu = false },
+            offset = with(density) {
+                DpOffset(
+                    x = pressOffset.x.toDp(),
+                    y = pressOffset.y.toDp()
+                )
+            }
+        ) {
+            DropdownMenuItem(
+                text = { Text("Copy All") },
+                onClick = {
+                    context.copyToClip(
+                        clipboard,
+                        message.message,
+                        scope
+                    )
+                    context.showToast("Copied")
+                    showMenu = false
+                }
+            )
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text("Delete") },
+                onClick = {
+                    onDeleteClick()
+                    hasDeleteConfirmed = true
+                    showMenu = false
+                }
+            )
+        }
+
     }
+
 
 
 }
@@ -701,10 +707,13 @@ fun MarkdownText(
     message: Chatora,
     modifier: Modifier = Modifier
 ) {
+
+    val scope = rememberCoroutineScope()
+
     val segments = parseSegments(message.message)
     val isUser = message.isUser
 
-    val textColor = if (isUser) AppColors.OnPrimary else AppColors.OnSurface
+    val textColor = remember { if (isUser) AppColors.OnPrimary else AppColors.OnSurface }
 
     Column(modifier = modifier) {
         segments.forEach { segment ->
@@ -913,59 +922,4 @@ private fun AnnotatedString.Builder.processInlineStyles(
     if (lastIndex < text.length) {
         append(text.substring(lastIndex))
     }
-}
-
-@Composable
-fun SwipeBackground(
-    modifier: Modifier = Modifier,
-    onCancelClick: () -> Unit = {},
-    onDeleteClick: () -> Unit = {}
-) {
-
-    Row(
-        modifier = modifier
-            .background(Color.LightGray.copy(alpha = 0.1f))
-            .padding(vertical = 12.dp),
-        horizontalArrangement = Arrangement.Center
-    ) {
-
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .weight(1f)
-                .background(Color.Red.copy(alpha = 0.5f)),
-            contentAlignment = Alignment.Center
-        ) {
-            IconButton(onClick = onDeleteClick) {
-                Icon(
-                    modifier = Modifier.size(48.dp),
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "Delete",
-                    tint = Color.White
-                )
-            }
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .weight(1f)
-                .background(Color.Green.copy(alpha = 0.5f)),
-            contentAlignment = Alignment.Center
-        ) {
-            IconButton(onClick = onCancelClick) {
-                Icon(
-                    modifier = Modifier.size(48.dp),
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Cancel",
-                    tint = Color.White
-                )
-            }
-        }
-
-    }
-}
-
-@Composable
-fun ss(modifier: Modifier = Modifier) {
-
 }

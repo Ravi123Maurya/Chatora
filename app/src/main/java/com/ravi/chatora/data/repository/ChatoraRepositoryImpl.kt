@@ -4,9 +4,10 @@ import com.google.firebase.ai.GenerativeModel
 import com.google.firebase.ai.type.FirebaseAIException
 import com.google.firebase.ai.type.content
 import com.ravi.chatora.data.local.ChatoraDao
-import com.ravi.chatora.data.local.toChatora
-import com.ravi.chatora.data.local.toChatoraEntity
+import com.ravi.chatora.data.mappers.toChatora
+import com.ravi.chatora.data.mappers.toChatoraEntity
 import com.ravi.chatora.domain.models.Chatora
+import com.ravi.chatora.domain.models.ChatoraHistory
 import com.ravi.chatora.domain.repository.ChatoraRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -54,5 +55,9 @@ class ChatoraRepositoryImpl @Inject constructor(
 
     override fun deleteChatora(id: Int) {
         chatoraDao.deleteChatora(id)
+    }
+
+    override fun getChatoraHistory(): List<ChatoraHistory> {
+        TODO("Not yet implemented")
     }
 }

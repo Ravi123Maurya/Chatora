@@ -1,6 +1,7 @@
 package com.ravi.chatora.domain.repository
 
 import com.ravi.chatora.domain.models.Chatora
+import com.ravi.chatora.domain.models.ChatoraHistory
 import com.ravi.chatora.utils.Resource
 import kotlinx.coroutines.flow.Flow
 
@@ -13,4 +14,6 @@ interface ChatoraRepository {
 
    fun deleteChatora(id: Int)
 
+
+   fun getChatoraHistory() : List<ChatoraHistory>
 }

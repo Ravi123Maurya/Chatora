@@ -23,37 +23,4 @@ data class ChatoraEntity(
 )
 
 
-// Chatora <-> ChatoraEntity Mappers
-fun ChatoraEntity.toChatora(): Chatora {
-    return Chatora(
-        id = id,
-        message = message,
-        isUser = isUser,
-        timeStamp = timeStamp
-    )
-}
 
-fun Chatora.toChatoraEntity(): ChatoraEntity {
-    return ChatoraEntity(
-//        id = id,
-        message = message,
-        isUser = isUser,
-        timeStamp = timeStamp
-    )
-}
-
-fun main() = runBlocking{
-    thread {
-        println("Work A : Thread: ${Thread.currentThread().name}")
-        Thread.sleep(1000)
-        println("Work B : Thread: ${Thread.currentThread().name}")
-    }
-
-     CoroutineScope(CoroutineScope(Dispatchers.Default).coroutineContext).launch {
-        println("Work C : Thread: ${Thread.currentThread().name}")
-        delay(1000)
-        println("Work D : Thread: ${Thread.currentThread().name}")
-    }
-    return@runBlocking
-
-}
