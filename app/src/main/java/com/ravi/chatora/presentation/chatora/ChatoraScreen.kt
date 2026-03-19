@@ -8,10 +8,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
@@ -24,6 +20,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
@@ -31,13 +28,9 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.LocalTextSelectionColors
-import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Message
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material3.*
@@ -45,12 +38,10 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboard
@@ -58,22 +49,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.ParagraphStyle
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextIndent
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.ravi.chatora.domain.models.Chatora
 import com.ravi.chatora.presentation.chatora.components.ScrollToBottom
 import com.ravi.chatora.presentation.chatora.components.VoiceChatDialog
 import com.ravi.chatora.presentation.chatora.components.VoiceChatoraViewModel
@@ -84,7 +68,6 @@ import com.ravi.chatora.utils.showToast
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-// ─── Design tokens ────────────────────────────────────────────────────────────
 
 private val CornerMd = 12.dp
 private val CornerLg = 20.dp
@@ -95,7 +78,7 @@ private val SpaceMd = 12.dp
 private val SpaceLg = 16.dp
 private val SpaceXl = 24.dp
 
-// ─── Screen ───────────────────────────────────────────────────────────────────
+// ─── Screen ───────
 
 @RequiresApi(Build.VERSION_CODES.O)
 @OptIn(ExperimentalMaterial3Api::class)
@@ -110,11 +93,10 @@ fun ChatoraScreen(
     val haptic = LocalHapticFeedback.current
 
     var messageText by remember { mutableStateOf("") }
-    val chatUiState by chatoraViewModel.chatUiState.collectAsStateWithLifecycle()
+    val parsedChatoras by chatoraViewModel.parsedChatoras.collectAsStateWithLifecycle()
     val chatoraState by chatoraViewModel.getChatoraResponseState.collectAsState()
     val voiceState by voiceChatoraViewModel.voiceState.collectAsState()
 
-    var lastAnimatedMessageId by rememberSaveable { mutableStateOf<Long?>(null) }
     var shouldStartVoiceChat by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -128,9 +110,14 @@ fun ChatoraScreen(
     )
 
     LaunchedEffect(Unit) {
-        if (chatUiState.isNotEmpty()) listState.animateScrollToItem(0)
+        if (parsedChatoras.isNotEmpty()) listState.animateScrollToItem(0)
     }
 
+    val showScrollToBottomButton by remember {
+        derivedStateOf {
+            listState.firstVisibleItemScrollOffset != 0
+        }
+    }
 
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { 2 })
     BackHandler(enabled = pagerState.currentPage != 0) {
@@ -147,7 +134,7 @@ fun ChatoraScreen(
                             modifier = Modifier.windowInsetsPadding(
                                 WindowInsets.systemBars.only(WindowInsetsSides.Top)
                             ),
-                            messageCount = chatUiState.size,
+                            messageCount = parsedChatoras.size,
                             onMenuClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 coroutineScope.launch { pagerState.animateScrollToPage(1) }
@@ -180,9 +167,13 @@ fun ChatoraScreen(
                     },
                     floatingActionButton = {
                         AnimatedVisibility(
-                            visible = listState.firstVisibleItemScrollOffset != 0,
-                            enter = slideInVertically(animationSpec = tween(), initialOffsetY = { it/2 }),
-                            exit = slideOutVertically(animationSpec = tween(), targetOffsetY = { it/2 })
+                            visible = showScrollToBottomButton,
+                            enter = slideInVertically(
+                                animationSpec = tween(),
+                                initialOffsetY = { it / 2 }),
+                            exit = slideOutVertically(
+                                animationSpec = tween(),
+                                targetOffsetY = { it / 2 })
                         ) {
                             ScrollToBottom(onClick = {
                                 coroutineScope.launch { listState.animateScrollToItem(0) }
@@ -196,7 +187,7 @@ fun ChatoraScreen(
                             .background(AppColors.Background)
                             .padding(paddingValues)
                     ) {
-                        if (chatUiState.isEmpty()) {
+                        if (parsedChatoras.isEmpty()) {
                             EmptyStateView()
                         } else {
                             LazyColumn(
@@ -211,19 +202,12 @@ fun ChatoraScreen(
                                 reverseLayout = true,
                                 verticalArrangement = Arrangement.spacedBy(SpaceMd)
                             ) {
-                                itemsIndexed(
-                                    items = chatUiState.reversed(),
-                                    key = { _, message -> message.id }
-                                ) { index, message ->
-                                    val shouldAnimate =
-                                        index == 0 && message.isUser &&
-                                                lastAnimatedMessageId != message.id.toLong()
-                                    if (shouldAnimate) SideEffect {
-                                        lastAnimatedMessageId = message.id.toLong()
-                                    }
+                                items(
+                                    items = parsedChatoras.reversed(),
+                                    key = { message -> message.id }
+                                ) { message ->
                                     ChatBubble(
-                                        message = message,
-                                        shouldAnimate = shouldAnimate,
+                                        parsedChatora = message,
                                         onDeleteClick = {
                                             coroutineScope.launch {
                                                 delay(500)
@@ -266,7 +250,7 @@ fun ChatoraScreen(
     }
 }
 
-// ─── Empty state ──────────────────────────────────────────────────────────────
+// ─── Empty state ───────
 
 @Composable
 private fun EmptyStateView() {
@@ -346,7 +330,7 @@ private fun SuggestionChip(text: String) {
     }
 }
 
-// ─── Top Bar ──────────────────────────────────────────────────────────────────
+// ─── Top Bar ───────
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -456,7 +440,7 @@ fun ChatoraTopBar(
     }
 }
 
-// ─── Bottom Bar ───────────────────────────────────────────────────────────────
+// ─── Bottom Bar ──────
 
 @Composable
 fun ChatoraBottomBar(
@@ -604,12 +588,11 @@ private fun InputIconButton(
     }
 }
 
-// ─── Chat Bubble ──────────────────────────────────────────────────────────────
+// ─── Chat Bubble ────────
 
 @Composable
 fun ChatBubble(
-    message: Chatora,
-    shouldAnimate: Boolean,
+    parsedChatora: ParsedChatora,
     onDeleteClick: () -> Unit = {}
 ) {
     var pressOffset by remember { mutableStateOf(Offset.Zero) }
@@ -622,31 +605,8 @@ fun ChatBubble(
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
 
-    val alphaAnim = remember { Animatable(if (shouldAnimate && message.isUser) 0f else 1f) }
-    val scaleAnim = remember { Animatable(if (shouldAnimate && message.isUser) 0.85f else 1f) }
-    val offsetYAnim = remember { Animatable(if (shouldAnimate && message.isUser) 60f else 0f) }
-
-    LaunchedEffect(Unit) {
-        if (message.isUser && shouldAnimate) {
-            launch { alphaAnim.animateTo(1f, tween(250)) }
-            launch {
-                scaleAnim.animateTo(
-                    1f,
-                    spring(dampingRatio = Spring.DampingRatioMediumBouncy)
-                )
-            }
-            launch { offsetYAnim.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
-        }
-    }
-
     Box(
         modifier = Modifier
-            .graphicsLayer {
-                alpha = alphaAnim.value
-                scaleX = scaleAnim.value
-                scaleY = scaleAnim.value
-                translationY = offsetYAnim.value
-            }
             .pointerInput(Unit) {
                 detectTapGestures(onLongPress = { offset ->
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -661,10 +621,10 @@ fun ChatBubble(
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = if (message.isUser) Arrangement.End else Arrangement.Start
+                horizontalArrangement = if (parsedChatora.isUser) Arrangement.End else Arrangement.Start
             ) {
                 // AI avatar
-                if (!message.isUser) {
+                if (!parsedChatora.isUser) {
                     Box(
                         modifier = Modifier
                             .padding(end = SpaceSm)
@@ -691,17 +651,17 @@ fun ChatBubble(
                     shape = RoundedCornerShape(
                         topStart = CornerLg,
                         topEnd = CornerLg,
-                        bottomStart = if (message.isUser) CornerLg else SpaceXs,
-                        bottomEnd = if (message.isUser) SpaceXs else CornerLg
+                        bottomStart = if (parsedChatora.isUser) CornerLg else SpaceXs,
+                        bottomEnd = if (parsedChatora.isUser) SpaceXs else CornerLg
                     ),
-                    color = if (message.isUser) AppColors.Primary
+                    color = if (parsedChatora.isUser) AppColors.Primary
                     else AppColors.SurfaceContainerHigh,
-                    shadowElevation = if (message.isUser) 2.dp else 1.dp,
-                    modifier = if (message.isUser) {
+                    shadowElevation = if (parsedChatora.isUser) 2.dp else 1.dp,
+                    modifier = if (parsedChatora.isUser) {
                         Modifier.widthIn(max = 290.dp)
                     } else {
                         Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
                             .border(
                                 0.5.dp,
                                 AppColors.OutlineVariant.copy(alpha = 0.5f),
@@ -709,41 +669,39 @@ fun ChatBubble(
                             )
                     }
                 ) {
-                    SelectionContainer {
-                        Column(modifier = Modifier.padding(SpaceMd)) {
-                            MarkdownText(message)
-                            Spacer(Modifier.height(SpaceXs))
+                    Column(modifier = Modifier.padding(SpaceMd)) {
+                        MarkdownText(parsedChatora = parsedChatora)
+                        Spacer(Modifier.height(SpaceXs))
 
-                            // Footer
-                            Row(
-                                modifier = Modifier.align(Alignment.End),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(SpaceXs)
-                            ) {
-                                if (!message.isUser) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.ContentCopy,
-                                        contentDescription = "Copy",
-                                        modifier = Modifier
-                                            .size(16.dp)
-                                            .clickable {
-                                                context.copyToClip(
-                                                    clipboard,
-                                                    message.message,
-                                                    scope
-                                                )
-                                                context.showToast("Copied to clipboard")
-                                            },
-                                        tint = AppColors.OnSurfaceVariant.copy(alpha = 0.5f)
-                                    )
-                                }
-                                Text(
-                                    text = message.timeStamp,
-                                    fontSize = 10.sp,
-                                    color = if (message.isUser) Color.White.copy(alpha = 0.6f)
-                                    else AppColors.OnSurfaceVariant.copy(alpha = 0.5f)
+                        // Footer
+                        Row(
+                            modifier = Modifier.align(Alignment.End),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(SpaceXs)
+                        ) {
+                            if (!parsedChatora.isUser) {
+                                Icon(
+                                    imageVector = Icons.Rounded.ContentCopy,
+                                    contentDescription = "Copy",
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .clickable {
+                                            context.copyToClip(
+                                                clipboard,
+                                                text = parsedChatora.message,
+                                                scope
+                                            )
+                                            context.showToast("Copied to clipboard")
+                                        },
+                                    tint = AppColors.OnSurfaceVariant.copy(alpha = 0.5f)
                                 )
                             }
+                            Text(
+                                text = parsedChatora.timeStamp,
+                                fontSize = 10.sp,
+                                color = if (parsedChatora.isUser) Color.White.copy(alpha = 0.6f)
+                                else AppColors.OnSurfaceVariant.copy(alpha = 0.5f)
+                            )
                         }
                     }
                 }
@@ -774,7 +732,7 @@ fun ChatBubble(
                     }
                 },
                 onClick = {
-                    context.copyToClip(clipboard, message.message, scope)
+                    context.copyToClip(clipboard, parsedChatora.message, scope)
                     context.showToast("Copied")
                     showMenu = false
                 }
@@ -808,45 +766,18 @@ fun ChatBubble(
     }
 }
 
-// ─── Segments ─────────────────────────────────────────────────────────────────
-
-sealed class Segment {
-    data class Markdown(val content: String) : Segment()
-    data class CodeBlock(val language: String, val code: String) : Segment()
-}
-
-fun parseSegments(input: String): List<Segment> {
-    val result = mutableListOf<Segment>()
-    val fenceRegex = Regex("""```(\w*)\n([\s\S]*?)```""")
-    var lastEnd = 0
-    fenceRegex.findAll(input).forEach { match ->
-        if (match.range.first > lastEnd) result += Segment.Markdown(
-            input.substring(
-                lastEnd,
-                match.range.first
-            )
-        )
-        result += Segment.CodeBlock(
-            match.groupValues[1].ifEmpty { "code" },
-            match.groupValues[2].trimEnd()
-        )
-        lastEnd = match.range.last + 1
-    }
-    if (lastEnd < input.length) result += Segment.Markdown(input.substring(lastEnd))
-    return result
-}
-
 // ─── Markdown Text ────────────────────────────────────────────────────────────
 
 @Composable
-fun MarkdownText(message: Chatora, modifier: Modifier = Modifier) {
-    val scope = rememberCoroutineScope()
-    val segments = parseSegments(message.message)
-    val isUser = message.isUser
+fun MarkdownText(modifier: Modifier = Modifier, parsedChatora: ParsedChatora) {
+
+    val isUser = parsedChatora.isUser
     val textColor = if (isUser) AppColors.OnPrimary else AppColors.OnSurface
 
+
     Column(modifier = modifier) {
-        segments.forEach { segment ->
+        parsedChatora.parsedMessage.forEach { segment ->
+
             when (segment) {
                 is Segment.CodeBlock -> {
                     Spacer(Modifier.height(SpaceSm))
@@ -855,10 +786,9 @@ fun MarkdownText(message: Chatora, modifier: Modifier = Modifier) {
                 }
 
                 is Segment.Markdown -> {
-                    val annotated = buildMarkdownAnnotatedString(segment.content, textColor)
-                    if (annotated.text.isNotBlank()) {
+                    if (segment.annotatedContent.isNotBlank()) {
                         Text(
-                            text = annotated,
+                            text = segment.annotatedContent,
                             fontSize = 15.sp,
                             color = textColor,
                             lineHeight = 23.sp
@@ -979,65 +909,4 @@ fun CodeBlockView(language: String, code: String) {
             )
         }
     }
-}
-
-// ─── Markdown Builder ─────────────────────────────────────────────────────────
-
-fun buildMarkdownAnnotatedString(text: String, textColor: Color): AnnotatedString {
-    val headingStyle = SpanStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold, color = textColor)
-    val h3Style = SpanStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = textColor)
-    val boldStyle = SpanStyle(fontWeight = FontWeight.Bold, color = AppColors.Primary)
-    val inlineCodeStyle = SpanStyle(
-        fontFamily = FontFamily.Monospace, fontSize = 12.sp,
-        background = Color(0xFFE8F0FF), color = Color(0xFF3358CC)
-    )
-    val bulletParagraph = ParagraphStyle(textIndent = TextIndent(restLine = 8.sp))
-
-    return buildAnnotatedString {
-        text.trimEnd().lines().forEachIndexed { index, line ->
-            val trimmed = line.trim()
-            when {
-                trimmed.startsWith("## ") -> {
-                    withStyle(headingStyle) { append(trimmed.removePrefix("## ")) }
-                    append("\n")
-                }
-
-                trimmed.startsWith("### ") -> {
-                    withStyle(h3Style) { append(trimmed.removePrefix("### ")) }
-                    append("\n")
-                }
-
-                trimmed.startsWith("* ") || trimmed.startsWith("- ") -> {
-                    val content = trimmed.removePrefix("* ").removePrefix("- ")
-                    withStyle(bulletParagraph) {
-                        append("• ")
-                        processInlineStyles(content, boldStyle, inlineCodeStyle)
-                    }
-                    append("\n")
-                }
-
-                trimmed.isEmpty() -> append("\n")
-                else -> {
-                    processInlineStyles(trimmed, boldStyle, inlineCodeStyle)
-                    if (index < text.trimEnd().lines().lastIndex) append("\n")
-                }
-            }
-        }
-    }
-}
-
-private fun AnnotatedString.Builder.processInlineStyles(
-    text: String, boldStyle: SpanStyle, inlineCodeStyle: SpanStyle
-) {
-    val pattern = Regex("""\*\*(.*?)\*\*|`([^`]+)`""")
-    var lastIndex = 0
-    pattern.findAll(text).forEach { match ->
-        if (match.range.first > lastIndex) append(text.substring(lastIndex, match.range.first))
-        when {
-            match.groupValues[1].isNotEmpty() -> withStyle(boldStyle) { append(match.groupValues[1]) }
-            match.groupValues[2].isNotEmpty() -> withStyle(inlineCodeStyle) { append(" ${match.groupValues[2]} ") }
-        }
-        lastIndex = match.range.last + 1
-    }
-    if (lastIndex < text.length) append(text.substring(lastIndex))
 }
