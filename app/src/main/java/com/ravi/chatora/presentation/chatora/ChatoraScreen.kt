@@ -1,33 +1,29 @@
 package com.ravi.chatora.presentation.chatora
 
 import android.Manifest
-import android.content.ClipData
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
@@ -35,10 +31,13 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.rounded.Message
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material3.*
@@ -46,16 +45,14 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.drawscope.DrawStyle
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.pointerInteropFilter
-import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -70,7 +67,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -78,7 +74,7 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ravi.chatora.domain.models.Chatora
-import com.ravi.chatora.presentation.chatora.components.FloatingChatoraQueries
+import com.ravi.chatora.presentation.chatora.components.ScrollToBottom
 import com.ravi.chatora.presentation.chatora.components.VoiceChatDialog
 import com.ravi.chatora.presentation.chatora.components.VoiceChatoraViewModel
 import com.ravi.chatora.presentation.chatorahistory.ChatoraHistory
@@ -87,6 +83,19 @@ import com.ravi.chatora.utils.copyToClip
 import com.ravi.chatora.utils.showToast
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+// ─── Design tokens ────────────────────────────────────────────────────────────
+
+private val CornerMd = 12.dp
+private val CornerLg = 20.dp
+private val CornerXl = 28.dp
+private val SpaceXs = 4.dp
+private val SpaceSm = 8.dp
+private val SpaceMd = 12.dp
+private val SpaceLg = 16.dp
+private val SpaceXl = 24.dp
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
 
 @RequiresApi(Build.VERSION_CODES.O)
 @OptIn(ExperimentalMaterial3Api::class)
@@ -98,6 +107,7 @@ fun ChatoraScreen(
     val context = LocalContext.current
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
 
     var messageText by remember { mutableStateOf("") }
     val chatUiState by chatoraViewModel.chatUiState.collectAsStateWithLifecycle()
@@ -110,87 +120,75 @@ fun ChatoraScreen(
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
         onResult = { isGranted ->
-            if (!isGranted) {
-                context.showToast("Permission Denied")
-            } else {
-                context.showToast("Permission Granted")
-                shouldStartVoiceChat = true
+            if (!isGranted) context.showToast("Microphone permission denied")
+            else {
+                context.showToast("Ready to listen"); shouldStartVoiceChat = true
             }
         }
     )
 
     LaunchedEffect(Unit) {
-        if (chatUiState.isNotEmpty()) {
-            listState.animateScrollToItem(0)
-        }
+        if (chatUiState.isNotEmpty()) listState.animateScrollToItem(0)
     }
+
 
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { 2 })
-    BackHandler(
-        enabled = pagerState.currentPage != 0
-    ) {
-        if (pagerState.currentPage != 0) {
-            coroutineScope.launch {
-                pagerState.animateScrollToPage(0)
-            }
-        }
+    BackHandler(enabled = pagerState.currentPage != 0) {
+        coroutineScope.launch { pagerState.animateScrollToPage(0) }
     }
 
-    HorizontalPager(
-        state = pagerState,
-        userScrollEnabled = false
-    ) { page ->
+    HorizontalPager(state = pagerState, userScrollEnabled = false) { page ->
         when (page) {
             0 -> {
                 Scaffold(
+                    containerColor = AppColors.Background,
                     topBar = {
                         ChatoraTopBar(
                             modifier = Modifier.windowInsetsPadding(
-                                WindowInsets.systemBars.only(
-                                    WindowInsetsSides.Top
-                                )
+                                WindowInsets.systemBars.only(WindowInsetsSides.Top)
                             ),
+                            messageCount = chatUiState.size,
                             onMenuClick = {
-                                coroutineScope.launch {
-                                    pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                                }
-                            }
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                coroutineScope.launch { pagerState.animateScrollToPage(1) }
+                            },
+                            onNewChat = { /*chatoraViewModel.clearChat()*/ }
                         )
                     },
                     bottomBar = {
-                        Column {
-//                AnimatedVisibility(visible = messageText == "") {
-//                    FloatingChatoraQueries(onQueryClick = { query -> messageText = query })
-//                }
-                            ChatoraBottomBar(
-                                isLoading = chatoraState is GetChatoraResponse.Loading,
-                                messageText = messageText,
-                                onMessageChange = { messageText = it },
-                                onSendClick = {
-                                    if (messageText.isNotBlank()) {
-                                        coroutineScope.launch {
-                                            chatoraViewModel.getChatoraResponse(messageText)
-                                            messageText = ""
-                                            listState.animateScrollToItem(0)
-                                        }
+                        ChatoraBottomBar(
+                            isLoading = chatoraState is GetChatoraResponse.Loading,
+                            messageText = messageText,
+                            onMessageChange = { messageText = it },
+                            onSendClick = {
+                                if (messageText.isNotBlank()) {
+                                    coroutineScope.launch {
+                                        chatoraViewModel.getChatoraResponse(messageText)
+                                        messageText = ""
+                                        listState.animateScrollToItem(0)
                                     }
-                                },
-                                onVoiceChatClick = {
-                                    if (ContextCompat.checkSelfPermission(
-                                            context,
-                                            Manifest.permission.RECORD_AUDIO
-                                        ) == PackageManager.PERMISSION_GRANTED
-                                    ) {
-                                        shouldStartVoiceChat = true
-                                    } else {
-                                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                    }
-
                                 }
-                            )
-                        }
-
+                            },
+                            onVoiceChatClick = {
+                                if (ContextCompat.checkSelfPermission(
+                                        context, Manifest.permission.RECORD_AUDIO
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                ) shouldStartVoiceChat = true
+                                else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        )
                     },
+                    floatingActionButton = {
+                        AnimatedVisibility(
+                            visible = listState.firstVisibleItemScrollOffset != 0,
+                            enter = slideInVertically(animationSpec = tween(), initialOffsetY = { it/2 }),
+                            exit = slideOutVertically(animationSpec = tween(), targetOffsetY = { it/2 })
+                        ) {
+                            ScrollToBottom(onClick = {
+                                coroutineScope.launch { listState.animateScrollToItem(0) }
+                            })
+                        }
+                    }
                 ) { paddingValues ->
                     Box(
                         modifier = Modifier
@@ -198,60 +196,45 @@ fun ChatoraScreen(
                             .background(AppColors.Background)
                             .padding(paddingValues)
                     ) {
-
                         if (chatUiState.isEmpty()) {
-                            Box(
-                                Modifier
-                                    .fillMaxSize()
-                                    .padding(16.dp), contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "How can I help you today?",
-                                    color = AppColors.Primary,
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
+                            EmptyStateView()
                         } else {
                             LazyColumn(
                                 state = listState,
                                 modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(vertical = 16.dp),
+                                contentPadding = PaddingValues(
+                                    top = SpaceLg,
+                                    bottom = SpaceXl,
+                                    start = SpaceMd,
+                                    end = SpaceMd
+                                ),
                                 reverseLayout = true,
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(SpaceMd)
                             ) {
                                 itemsIndexed(
                                     items = chatUiState.reversed(),
-                                    key = { i, message -> message.id }
+                                    key = { _, message -> message.id }
                                 ) { index, message ->
                                     val shouldAnimate =
-                                        index == 0 && message.isUser && lastAnimatedMessageId != message.id.toLong()
-
-                                    if (shouldAnimate) {
-                                        // Side effect to mark this ID as animated so it doesn't run again
-                                        SideEffect {
-                                            lastAnimatedMessageId = message.id.toLong()
-                                        }
+                                        index == 0 && message.isUser &&
+                                                lastAnimatedMessageId != message.id.toLong()
+                                    if (shouldAnimate) SideEffect {
+                                        lastAnimatedMessageId = message.id.toLong()
                                     }
-
                                     ChatBubble(
-                                        message,
+                                        message = message,
                                         shouldAnimate = shouldAnimate,
                                         onDeleteClick = {
                                             coroutineScope.launch {
                                                 delay(500)
                                                 chatoraViewModel.deleterChatora(message.id)
                                             }
-                                            context.showToast("Deleted")
+                                            context.showToast("Message deleted")
                                         }
                                     )
-
-
                                 }
                             }
                         }
-
                     }
                 }
             }
@@ -260,101 +243,220 @@ fun ChatoraScreen(
                 ChatoraHistory(
                     history = listOf(),
                     onHistoryClick = {
-                        coroutineScope.launch {
-                            pagerState.animateScrollToPage(pagerState.currentPage - 1)
-                        }
+                        coroutineScope.launch { pagerState.animateScrollToPage(0) }
                     },
                     onBackClick = {
-                        coroutineScope.launch {
-                            pagerState.animateScrollToPage(pagerState.currentPage - 1)
-                        }
+                        coroutineScope.launch { pagerState.animateScrollToPage(0) }
                     }
                 )
             }
         }
     }
 
-
-
-
     if (shouldStartVoiceChat) {
         VoiceChatDialog(
             voiceState = voiceState,
             onStartListening = { voiceChatoraViewModel.startVoiceChatora() },
             onStopListening = { voiceChatoraViewModel.stopVoiceChatora() },
-            onSubmitClick = {
-                messageText = voiceState.spokenText
-                shouldStartVoiceChat = false
-            },
+            onSubmitClick = { messageText = voiceState.spokenText; shouldStartVoiceChat = false },
             onCancelClick = {
-                voiceChatoraViewModel.stopVoiceChatora()
-                shouldStartVoiceChat = false
+                voiceChatoraViewModel.stopVoiceChatora(); shouldStartVoiceChat = false
             }
         )
     }
-
 }
+
+// ─── Empty state ──────────────────────────────────────────────────────────────
+
+@Composable
+private fun EmptyStateView() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(SpaceXl),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Glowing logo mark
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .background(
+                    brush = Brush.radialGradient(
+                        listOf(AppColors.Primary.copy(alpha = 0.15f), Color.Transparent)
+                    ),
+                    shape = CircleShape
+                )
+                .border(1.dp, AppColors.Primary.copy(alpha = 0.25f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "C",
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+                color = AppColors.Primary
+            )
+        }
+        Spacer(Modifier.height(SpaceXl))
+        Text(
+            text = "How can I help you?",
+            color = AppColors.OnSurface,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(SpaceXs))
+        Text(
+            text = "Ask me anything — I'm here to think alongside you.",
+            color = AppColors.OnSurfaceVariant,
+            fontSize = 14.sp,
+            textAlign = TextAlign.Center,
+            lineHeight = 20.sp
+        )
+        Spacer(Modifier.height(SpaceXl + SpaceLg))
+
+        // Suggestion chips
+        val suggestions = listOf(
+            "✦  Summarise an article",
+            "✦  Write some code",
+            "✦  Explain a concept",
+            "✦  Brainstorm ideas"
+        )
+        suggestions.forEach { suggestion ->
+            SuggestionChip(suggestion)
+            Spacer(Modifier.height(SpaceSm))
+        }
+    }
+}
+
+@Composable
+private fun SuggestionChip(text: String) {
+    Surface(
+        shape = RoundedCornerShape(CornerLg),
+        color = AppColors.SurfaceContainer,
+        border = BorderStroke(1.dp, AppColors.OutlineVariant.copy(alpha = 0.6f)),
+        modifier = Modifier.fillMaxWidth(0.85f)
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = SpaceLg, vertical = SpaceMd),
+            color = AppColors.OnSurfaceVariant,
+            fontSize = 14.sp
+        )
+    }
+}
+
+// ─── Top Bar ──────────────────────────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatoraTopBar(modifier: Modifier = Modifier, onMenuClick: () -> Unit = {}) {
-
-    val context = LocalContext.current
-
-
-    TopAppBar(
-        modifier = modifier,
-        title = {
+fun ChatoraTopBar(
+    modifier: Modifier = Modifier,
+    messageCount: Int = 0,
+    onMenuClick: () -> Unit = {},
+    onNewChat: () -> Unit = {}
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = AppColors.Background,
+        shadowElevation = 0.dp,
+        tonalElevation = 0.dp
+    ) {
+        Column {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = SpaceMd, vertical = SpaceSm),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Profile picture
-                Box(
+                // Logo + name
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(SpaceMd),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(
+                                brush = Brush.linearGradient(
+                                    listOf(AppColors.Primary, AppColors.Tertiary)
+                                ),
+                                shape = CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "C",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "Chatora",
+                            color = AppColors.OnSurface,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            letterSpacing = 1.sp
+                        )
+                        if (messageCount > 0) {
+                            Text(
+                                text = "$messageCount messages",
+                                color = AppColors.OnSurfaceVariant,
+                                fontSize = 11.sp
+                            )
+                        } else {
+                            Text(
+                                text = "AI Assistant",
+                                color = AppColors.OnSurfaceVariant,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+
+                // Actions
+                Row(
                     modifier = Modifier
-                        .size(40.dp)
                         .clip(CircleShape)
-                        .background(AppColors.PrimaryContainer),
-                    contentAlignment = Alignment.Center
+                        .clickable { onNewChat() }
+                        .background(AppColors.PrimaryContainer)
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "C",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = AppColors.Primary
+                        text = "New chat",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AppColors.OnPrimaryContainer
+                    )
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.Message,
+                        contentDescription = "Start New chat",
+                        tint = AppColors.OnPrimaryContainer,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
 
-                Text(
-                    text = "Chatora",
-                    color = AppColors.OnSurface,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp,
-                    letterSpacing = 4.sp
-                )
-
+                IconButton(onClick = onMenuClick) {
+                    Icon(
+                        imageVector = Icons.Rounded.Menu,
+                        contentDescription = "History",
+                        tint = AppColors.OnSurface
+                    )
+                }
             }
-        },
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = AppColors.Surface.copy(alpha = 0.1f)
-        ),
-        actions = {
-            IconButton(
-                modifier = Modifier,
-                onClick = {
-
-                    onMenuClick()
-                }) {
-                Icon(
-                    imageVector = Icons.Rounded.Menu,
-                    contentDescription = "More",
-                    tint = AppColors.OnSurface
-                )
-            }
+            // Bottom divider
+            HorizontalDivider(
+                color = AppColors.OutlineVariant.copy(alpha = 0.4f),
+                thickness = 0.5.dp
+            )
         }
-    )
+    }
 }
 
+// ─── Bottom Bar ───────────────────────────────────────────────────────────────
 
 @Composable
 fun ChatoraBottomBar(
@@ -365,126 +467,144 @@ fun ChatoraBottomBar(
     onVoiceChatClick: () -> Unit
 ) {
     val focusManager = LocalFocusManager.current
-    LaunchedEffect(Unit) {
-        focusManager.clearFocus()
-    }
-
-    val context = LocalContext.current
     var hasMicClicked by remember { mutableStateOf(false) }
 
     LaunchedEffect(hasMicClicked) {
         if (hasMicClicked) {
-            delay(1000)
-            hasMicClicked = false
+            delay(1200); hasMicClicked = false
         }
     }
+
+    val canSend = messageText.isNotBlank()
 
     Surface(
         modifier = Modifier.imePadding(),
-        color = AppColors.Surface.copy(alpha = 0.1f),
+        color = AppColors.Background,
+        shadowElevation = 0.dp
     ) {
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(AppColors.Surface.copy(alpha = 0.1f))
-                .padding(WindowInsets.navigationBars.asPaddingValues())
-                .padding(horizontal = 8.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Message input field
-            OutlinedTextField(
-                value = messageText,
-                onValueChange = onMessageChange,
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = {
-                    Text(
-                        text = "Type a message...",
-                        color = AppColors.OnSurfaceVariant
-                    )
-                },
-                shape = RoundedCornerShape(24.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = AppColors.Primary,
-                    unfocusedBorderColor = AppColors.OutlineVariant,
-                    focusedContainerColor = AppColors.Surface,
-                    unfocusedContainerColor = AppColors.Surface,
-                    focusedTextColor = Color.Black,
-                    unfocusedTextColor = Color.Black
-                ),
-                maxLines = 4,
-                trailingIcon = {
-                    Row(Modifier.padding(start = 8.dp, end = 8.dp , top = 24.dp, bottom = 8.dp)) {
-
-                        IconButton(
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .border(1.dp, Color.LightGray, CircleShape)
-                                .background(AppColors.Primary.copy(alpha = 0.1f)),
-                            onClick = {
-                                hasMicClicked = true
-                                onVoiceChatClick()
-                            }
-                        ) {
-                            if (hasMicClicked) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(24.dp),
-                                    color = AppColors.Primary
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.Mic,
-                                    contentDescription = "Voice Recording",
-                                    tint = Color.Black
-                                )
-                            }
-
-                        }
-                        Spacer(Modifier.width(8.dp))
-
-                        val sendButtonColor =
-                            if (messageText.isNotBlank()) AppColors.Primary else AppColors.Primary.copy(
-                                alpha = 0.1f
-                            )
-                        val borderColor =
-                            if (messageText.isNotBlank()) Color.Transparent else Color.LightGray
-
-                        IconButton(
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .border(1.dp, borderColor, CircleShape)
-                                .background(sendButtonColor),
-                            onClick = { if (!isLoading) onSendClick() }
-                        ) {
-                            if (isLoading) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(24.dp),
-                                    color = AppColors.Primary
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.ArrowUpward,
-                                    contentDescription = "Send",
-                                    tint = if (messageText.isNotBlank()) Color.White else Color.Black
-                                )
-                            }
-
-                        }
-                    }
-
-                },
+        Column {
+            HorizontalDivider(
+                color = AppColors.OutlineVariant.copy(alpha = 0.4f),
+                thickness = 0.5.dp
             )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(AppColors.Background)
+                    .padding(WindowInsets.navigationBars.asPaddingValues())
+                    .padding(horizontal = SpaceMd, vertical = SpaceMd),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(SpaceSm)
+            ) {
+                // Text field
+                OutlinedTextField(
+                    value = messageText,
+                    onValueChange = onMessageChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = {
+                        Text(
+                            text = "Message Chatora…",
+                            color = AppColors.OnSurfaceVariant.copy(alpha = 0.6f),
+                            fontSize = 15.sp
+                        )
+                    },
+                    shape = RoundedCornerShape(CornerXl),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AppColors.Primary.copy(alpha = 0.6f),
+                        unfocusedBorderColor = AppColors.OutlineVariant.copy(alpha = 0.5f),
+                        focusedContainerColor = AppColors.SurfaceContainer,
+                        unfocusedContainerColor = AppColors.SurfaceContainer,
+                        focusedTextColor = AppColors.OnSurface,
+                        unfocusedTextColor = AppColors.OnSurface,
+                        cursorColor = AppColors.Primary,
+                    ),
+                    maxLines = 5,
+                    textStyle = LocalTextStyle.current.copy(fontSize = 15.sp)
+                )
 
+                // Voice button
+                InputIconButton(
+                    onClick = { hasMicClicked = true; onVoiceChatClick() },
+                    isActive = hasMicClicked,
+                    activeColor = AppColors.Secondary,
+                    icon = Icons.Default.Mic,
+                    contentDescription = "Voice input"
+                )
+
+                // Send button
+                val sendBg = if (canSend) AppColors.Primary else AppColors.SurfaceContainerHigh
+                val sendIcon = if (canSend) Color.White else AppColors.OnSurfaceVariant
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(sendBg)
+                        .clickable(enabled = !isLoading) { onSendClick() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.ArrowUpward,
+                            contentDescription = "Send",
+                            tint = sendIcon,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
-@Preview(showBackground = true, showSystemUi = true)
 @Composable
-fun BottomBarPreview() {
-    ChatoraBottomBar(false, "", {}, {}, {})
+private fun InputIconButton(
+    onClick: () -> Unit,
+    isActive: Boolean,
+    activeColor: Color,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String
+) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .background(
+                if (isActive) activeColor.copy(alpha = 0.15f)
+                else AppColors.SurfaceContainerHigh
+            )
+            .border(
+                1.dp,
+                if (isActive) activeColor.copy(alpha = 0.5f)
+                else AppColors.OutlineVariant.copy(alpha = 0.4f),
+                CircleShape
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        if (isActive) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(22.dp),
+                color = activeColor,
+                strokeWidth = 2.dp
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = AppColors.OnSurfaceVariant,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+    }
 }
+
+// ─── Chat Bubble ──────────────────────────────────────────────────────────────
 
 @Composable
 fun ChatBubble(
@@ -492,47 +612,30 @@ fun ChatBubble(
     shouldAnimate: Boolean,
     onDeleteClick: () -> Unit = {}
 ) {
-
     var pressOffset by remember { mutableStateOf(Offset.Zero) }
     var showMenu by remember { mutableStateOf(false) }
     var hasDeleteConfirmed by remember { mutableStateOf(false) }
-
 
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboard.current
     val context = LocalContext.current
     val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
 
-
-    val alphaAnim =
-        remember { Animatable(if (shouldAnimate && message.isUser) 0f else 1f) }
-    val scaleAnim =
-        remember { Animatable(if (shouldAnimate && message.isUser) 0.5f else 1f) }
-    val offsetYAnim =
-        remember { Animatable(if (shouldAnimate && message.isUser) 300f else 0f) }
-    val offsetXAnim =
-        remember { Animatable(if (shouldAnimate && message.isUser) 100f else 0f) }
+    val alphaAnim = remember { Animatable(if (shouldAnimate && message.isUser) 0f else 1f) }
+    val scaleAnim = remember { Animatable(if (shouldAnimate && message.isUser) 0.85f else 1f) }
+    val offsetYAnim = remember { Animatable(if (shouldAnimate && message.isUser) 60f else 0f) }
 
     LaunchedEffect(Unit) {
         if (message.isUser && shouldAnimate) {
+            launch { alphaAnim.animateTo(1f, tween(250)) }
             launch {
-                alphaAnim.animateTo(1f, animationSpec = tween(300))
-            }
-            launch {
-                // OvershootInterpolator gives it a nice "pop" effect
                 scaleAnim.animateTo(
                     1f,
-                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)
+                    spring(dampingRatio = Spring.DampingRatioMediumBouncy)
                 )
             }
-            launch {
-                // Slide up to 0
-                offsetYAnim.animateTo(0f, animationSpec = spring(stiffness = Spring.StiffnessLow))
-            }
-            launch {
-                // Slide left to 0 (since user msg is on right, we start a bit to the right)
-                offsetXAnim.animateTo(0f, animationSpec = spring(stiffness = Spring.StiffnessLow))
-            }
+            launch { offsetYAnim.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
         }
     }
 
@@ -543,86 +646,103 @@ fun ChatBubble(
                 scaleX = scaleAnim.value
                 scaleY = scaleAnim.value
                 translationY = offsetYAnim.value
-                translationX = offsetXAnim.value
             }
             .pointerInput(Unit) {
-                detectTapGestures(
-                    onLongPress = { offset ->
-                        // offset here is ALREADY relative to this Box — perfect
-                        pressOffset = offset
-                        showMenu = true
-                    }
-                )
+                detectTapGestures(onLongPress = { offset ->
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    pressOffset = offset
+                    showMenu = true
+                })
             }
     ) {
         AnimatedVisibility(
             visible = !hasDeleteConfirmed,
-            exit = shrinkVertically(
-                animationSpec = tween(durationMillis = 500),
-                shrinkTowards = Alignment.Top
-            )
+            exit = shrinkVertically(tween(400), shrinkTowards = Alignment.Top)
         ) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = if (message.isUser) Arrangement.End else Arrangement.Start
             ) {
+                // AI avatar
+                if (!message.isUser) {
+                    Box(
+                        modifier = Modifier
+                            .padding(end = SpaceSm)
+                            .size(32.dp)
+                            .background(
+                                brush = Brush.linearGradient(
+                                    listOf(AppColors.Primary, AppColors.Tertiary)
+                                ),
+                                shape = CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "C",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+
+                // Bubble
                 Surface(
                     shape = RoundedCornerShape(
-                        topStart = 16.dp,
-                        topEnd = 16.dp,
-                        bottomStart = if (message.isUser) 16.dp else 4.dp,
-                        bottomEnd = if (message.isUser) 4.dp else 16.dp
+                        topStart = CornerLg,
+                        topEnd = CornerLg,
+                        bottomStart = if (message.isUser) CornerLg else SpaceXs,
+                        bottomEnd = if (message.isUser) SpaceXs else CornerLg
                     ),
-                    color = if (message.isUser) AppColors.Primary else AppColors.SurfaceContainerHigh,
-                    shadowElevation = 1.dp,
-                    modifier = if (message.isUser) Modifier.widthIn(max = 280.dp) else Modifier.weight(
-                        1f
-                    )
+                    color = if (message.isUser) AppColors.Primary
+                    else AppColors.SurfaceContainerHigh,
+                    shadowElevation = if (message.isUser) 2.dp else 1.dp,
+                    modifier = if (message.isUser) {
+                        Modifier.widthIn(max = 290.dp)
+                    } else {
+                        Modifier
+                            .weight(1f)
+                            .border(
+                                0.5.dp,
+                                AppColors.OutlineVariant.copy(alpha = 0.5f),
+                                RoundedCornerShape(CornerLg, CornerLg, CornerLg, SpaceXs)
+                            )
+                    }
                 ) {
                     SelectionContainer {
-                        Column(
-                            modifier = Modifier.padding(12.dp)
-                        ) {
-
+                        Column(modifier = Modifier.padding(SpaceMd)) {
                             MarkdownText(message)
+                            Spacer(Modifier.height(SpaceXs))
 
-                            Spacer(modifier = Modifier.height(4.dp))
-
+                            // Footer
                             Row(
                                 modifier = Modifier.align(Alignment.End),
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(SpaceXs)
                             ) {
-
                                 if (!message.isUser) {
                                     Icon(
                                         imageVector = Icons.Rounded.ContentCopy,
-                                        contentDescription = "Copy contents",
+                                        contentDescription = "Copy",
                                         modifier = Modifier
-                                            .padding(horizontal = 12.dp)
-                                            .size(20.dp)
+                                            .size(16.dp)
                                             .clickable {
                                                 context.copyToClip(
                                                     clipboard,
                                                     message.message,
                                                     scope
                                                 )
-                                                context.showToast("Copied")
+                                                context.showToast("Copied to clipboard")
                                             },
-                                        tint = Color.Black.copy(alpha = 0.5f)
+                                        tint = AppColors.OnSurfaceVariant.copy(alpha = 0.5f)
                                     )
                                 }
                                 Text(
                                     text = message.timeStamp,
-                                    fontSize = 11.sp,
-                                    color = if (message.isUser) {
-                                        AppColors.OnPrimary.copy(alpha = 0.7f)
-                                    } else {
-                                        AppColors.OnSurfaceVariant
-                                    },
-
-                                    )
+                                    fontSize = 10.sp,
+                                    color = if (message.isUser) Color.White.copy(alpha = 0.6f)
+                                    else AppColors.OnSurfaceVariant.copy(alpha = 0.5f)
+                                )
                             }
                         }
                     }
@@ -633,28 +753,51 @@ fun ChatBubble(
         DropdownMenu(
             expanded = showMenu,
             onDismissRequest = { showMenu = false },
-            offset = with(density) {
-                DpOffset(
-                    x = pressOffset.x.toDp(),
-                    y = pressOffset.y.toDp()
-                )
-            }
+            offset = with(density) { DpOffset(pressOffset.x.toDp(), pressOffset.y.toDp()) },
+            containerColor = AppColors.Surface,
+            shadowElevation = 4.dp,
+            shape = RoundedCornerShape(CornerMd)
         ) {
             DropdownMenuItem(
-                text = { Text("Copy All") },
+                text = {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(SpaceSm),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Rounded.ContentCopy,
+                            null,
+                            Modifier.size(16.dp),
+                            tint = AppColors.OnSurfaceVariant
+                        )
+                        Text("Copy message", fontSize = 14.sp, color = AppColors.OnSurface)
+                    }
+                },
                 onClick = {
-                    context.copyToClip(
-                        clipboard,
-                        message.message,
-                        scope
-                    )
+                    context.copyToClip(clipboard, message.message, scope)
                     context.showToast("Copied")
                     showMenu = false
                 }
             )
-            HorizontalDivider()
+            HorizontalDivider(
+                color = AppColors.OutlineVariant.copy(alpha = 0.4f),
+                thickness = 0.5.dp
+            )
             DropdownMenuItem(
-                text = { Text("Delete") },
+                text = {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(SpaceSm),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.DeleteOutline,
+                            null,
+                            Modifier.size(16.dp),
+                            tint = AppColors.Error
+                        )
+                        Text("Delete", fontSize = 14.sp, color = AppColors.Error)
+                    }
+                },
                 onClick = {
                     onDeleteClick()
                     hasDeleteConfirmed = true
@@ -662,15 +805,10 @@ fun ChatBubble(
                 }
             )
         }
-
     }
-
-
-
 }
 
-
-// ── Segment model ─────────────────────────────────────────────────────────────
+// ─── Segments ─────────────────────────────────────────────────────────────────
 
 sealed class Segment {
     data class Markdown(val content: String) : Segment()
@@ -681,63 +819,49 @@ fun parseSegments(input: String): List<Segment> {
     val result = mutableListOf<Segment>()
     val fenceRegex = Regex("""```(\w*)\n([\s\S]*?)```""")
     var lastEnd = 0
-
     fenceRegex.findAll(input).forEach { match ->
-        if (match.range.first > lastEnd) {
-            result += Segment.Markdown(input.substring(lastEnd, match.range.first))
-        }
+        if (match.range.first > lastEnd) result += Segment.Markdown(
+            input.substring(
+                lastEnd,
+                match.range.first
+            )
+        )
         result += Segment.CodeBlock(
-            language = match.groupValues[1].ifEmpty { "code" },
-            code = match.groupValues[2].trimEnd()
+            match.groupValues[1].ifEmpty { "code" },
+            match.groupValues[2].trimEnd()
         )
         lastEnd = match.range.last + 1
     }
-
-    if (lastEnd < input.length) {
-        result += Segment.Markdown(input.substring(lastEnd))
-    }
-
+    if (lastEnd < input.length) result += Segment.Markdown(input.substring(lastEnd))
     return result
 }
 
-// ── Main composable ───────────────────────────────────────────────────────────
+// ─── Markdown Text ────────────────────────────────────────────────────────────
 
 @Composable
-fun MarkdownText(
-    message: Chatora,
-    modifier: Modifier = Modifier
-) {
-
+fun MarkdownText(message: Chatora, modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
-
     val segments = parseSegments(message.message)
     val isUser = message.isUser
-
-    val textColor = remember { if (isUser) AppColors.OnPrimary else AppColors.OnSurface }
+    val textColor = if (isUser) AppColors.OnPrimary else AppColors.OnSurface
 
     Column(modifier = modifier) {
         segments.forEach { segment ->
             when (segment) {
                 is Segment.CodeBlock -> {
-                    Spacer(Modifier.height(8.dp))
-                    CodeBlockView(
-                        language = segment.language,
-                        code = segment.code
-                    )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(SpaceSm))
+                    CodeBlockView(language = segment.language, code = segment.code)
+                    Spacer(Modifier.height(SpaceSm))
                 }
 
                 is Segment.Markdown -> {
-                    val annotated = buildMarkdownAnnotatedString(
-                        text = segment.content,
-                        textColor = textColor
-                    )
+                    val annotated = buildMarkdownAnnotatedString(segment.content, textColor)
                     if (annotated.text.isNotBlank()) {
                         Text(
                             text = annotated,
                             fontSize = 15.sp,
                             color = textColor,
-                            lineHeight = 22.sp
+                            lineHeight = 23.sp
                         )
                     }
                 }
@@ -746,180 +870,174 @@ fun MarkdownText(
     }
 }
 
-// ── Code block UI ─────────────────────────────────────────────────────────────
+// ─── Code Block ───────────────────────────────────────────────────────────────
 
 @Composable
 fun CodeBlockView(language: String, code: String) {
-
     val context = LocalContext.current
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
+    var copied by remember { mutableStateOf(false) }
 
-    val bgColor = Color(0xFFD5E4FA)   // dark navy
-    val headerColor = Color(0xFFBECDFA)   // slightly lighter for header bar
-    val borderColor = Color(0xFF3A3A55)
-    val codeColor = Color(0xFF343846)   // soft white-blue (Catppuccin Mocha text)
-    val labelColor = Color(0xFF2B4B67)   // blue accent for language tag
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(2000); copied = false
+        }
+    }
+
+    val bgColor = Color(0xFFF0F4FF)
+    val headerBg = Color(0xFFE3EAFF)
+    val borderColor = Color(0xFFCDD9F5)
+    val codeTextColor = Color(0xFF2D3757)
+    val langLabelColor = Color(0xFF4361C2)
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(CornerMd))
+            .border(1.dp, borderColor, RoundedCornerShape(CornerMd))
             .background(bgColor)
     ) {
-        // ── Header bar ──
+        // Header
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(headerColor)
-                .padding(horizontal = 14.dp, vertical = 8.dp),
+                .background(headerBg)
+                .padding(horizontal = SpaceMd, vertical = SpaceSm),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = language.lowercase(),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = labelColor,
-                fontFamily = FontFamily.Monospace
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(SpaceXs)
+            ) {
+                // Traffic lights
+                listOf(Color(0xFFFF6058), Color(0xFFFFBD2E), Color(0xFF28CA41)).forEach { c ->
+                    Box(
+                        Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(c)
+                    )
+                }
+                Spacer(Modifier.width(SpaceSm))
+                Text(
+                    text = language.lowercase(),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = langLabelColor,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 0.5.sp
+                )
+            }
 
             Row(
                 modifier = Modifier
+                    .clip(RoundedCornerShape(SpaceSm))
+                    .background(if (copied) AppColors.Success.copy(0.15f) else Color.Transparent)
                     .clickable {
                         context.copyToClip(clipboard, code, scope)
-                        context.showToast("Copied")
-                    },
-                verticalAlignment = Alignment.CenterVertically
+                        context.showToast("Code copied")
+                        copied = true
+                    }
+                    .padding(horizontal = SpaceSm, vertical = SpaceXs),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(SpaceXs)
             ) {
                 Icon(
-                    imageVector = Icons.Rounded.ContentCopy,
-                    contentDescription = "Copy contents",
-                    modifier = Modifier
-                        .padding(horizontal = 12.dp)
-                        .size(18.dp),
-                    tint = Color.Black,
+                    imageVector = if (copied) Icons.Default.Check else Icons.Rounded.ContentCopy,
+                    contentDescription = "Copy",
+                    modifier = Modifier.size(14.dp),
+                    tint = if (copied) AppColors.Success else langLabelColor
                 )
                 Text(
-                    text = "Copy code",
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = Color.Black,
+                    text = if (copied) "Copied!" else "Copy",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (copied) AppColors.Success else langLabelColor,
+                    fontSize = 11.sp
                 )
             }
         }
 
         HorizontalDivider(color = borderColor, thickness = 0.5.dp)
 
-        // ── Code content ──
+        // Code
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 14.dp, vertical = 12.dp)
+                .padding(horizontal = SpaceMd, vertical = SpaceMd)
         ) {
             Text(
                 text = code,
                 fontSize = 13.sp,
                 fontFamily = FontFamily.Monospace,
-                color = codeColor,
+                color = codeTextColor,
                 lineHeight = 20.sp,
-                softWrap = false   // let horizontal scroll handle long lines
+                softWrap = false
             )
         }
     }
 }
 
-// ── Markdown AnnotatedString builder ─────────────────────────────────────────
+// ─── Markdown Builder ─────────────────────────────────────────────────────────
 
-fun buildMarkdownAnnotatedString(
-    text: String,
-    textColor: Color
-): AnnotatedString {
-    val headingStyle = SpanStyle(
-        fontSize = 20.sp,
-        fontWeight = FontWeight.Bold,
-        color = textColor
-    )
-    val boldStyle = SpanStyle(
-        fontWeight = FontWeight.Bold,
-        color = AppColors.Primary
-    )
+fun buildMarkdownAnnotatedString(text: String, textColor: Color): AnnotatedString {
+    val headingStyle = SpanStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold, color = textColor)
+    val h3Style = SpanStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = textColor)
+    val boldStyle = SpanStyle(fontWeight = FontWeight.Bold, color = AppColors.Primary)
     val inlineCodeStyle = SpanStyle(
-        fontFamily = FontFamily.Monospace,
-        fontSize = 13.sp,
-        background = Color(0xFFC3E6F8),
-        color = Color(0xFF28364B)
+        fontFamily = FontFamily.Monospace, fontSize = 12.sp,
+        background = Color(0xFFE8F0FF), color = Color(0xFF3358CC)
     )
-    val bulletParagraph = ParagraphStyle(
-        textIndent = TextIndent(restLine = 4.sp)
-    )
+    val bulletParagraph = ParagraphStyle(textIndent = TextIndent(restLine = 8.sp))
 
     return buildAnnotatedString {
-        val lines = text.trimEnd().lines()
-
-        lines.forEachIndexed { index, line ->
+        text.trimEnd().lines().forEachIndexed { index, line ->
             val trimmed = line.trim()
-
             when {
-                // H2 / H3 heading
-                trimmed.startsWith("## ") || trimmed.startsWith("### ") -> {
-                    val content = trimmed.removePrefix("### ").removePrefix("## ")
-                    withStyle(headingStyle) { append(content) }
+                trimmed.startsWith("## ") -> {
+                    withStyle(headingStyle) { append(trimmed.removePrefix("## ")) }
                     append("\n")
                 }
 
-                // Bullet: "* " or "- "
+                trimmed.startsWith("### ") -> {
+                    withStyle(h3Style) { append(trimmed.removePrefix("### ")) }
+                    append("\n")
+                }
+
                 trimmed.startsWith("* ") || trimmed.startsWith("- ") -> {
                     val content = trimmed.removePrefix("* ").removePrefix("- ")
                     withStyle(bulletParagraph) {
-                        append("\u2022 ")   // proper bullet character
+                        append("• ")
                         processInlineStyles(content, boldStyle, inlineCodeStyle)
                     }
                     append("\n")
                 }
 
-                // Blank line → paragraph gap
                 trimmed.isEmpty() -> append("\n")
-
-                // Regular line
                 else -> {
                     processInlineStyles(trimmed, boldStyle, inlineCodeStyle)
-                    if (index < lines.lastIndex) append("\n")
+                    if (index < text.trimEnd().lines().lastIndex) append("\n")
                 }
             }
         }
     }
 }
 
-// ── Inline bold + inline-code processor ──────────────────────────────────────
-
 private fun AnnotatedString.Builder.processInlineStyles(
-    text: String,
-    boldStyle: SpanStyle,
-    inlineCodeStyle: SpanStyle
+    text: String, boldStyle: SpanStyle, inlineCodeStyle: SpanStyle
 ) {
     val pattern = Regex("""\*\*(.*?)\*\*|`([^`]+)`""")
     var lastIndex = 0
-
     pattern.findAll(text).forEach { match ->
-        if (match.range.first > lastIndex) {
-            append(text.substring(lastIndex, match.range.first))
-        }
+        if (match.range.first > lastIndex) append(text.substring(lastIndex, match.range.first))
         when {
-            match.groupValues[1].isNotEmpty() -> withStyle(boldStyle) {
-                append(match.groupValues[1])
-            }
-
-            match.groupValues[2].isNotEmpty() -> withStyle(inlineCodeStyle) {
-                append(" ${match.groupValues[2]} ")
-            }
+            match.groupValues[1].isNotEmpty() -> withStyle(boldStyle) { append(match.groupValues[1]) }
+            match.groupValues[2].isNotEmpty() -> withStyle(inlineCodeStyle) { append(" ${match.groupValues[2]} ") }
         }
         lastIndex = match.range.last + 1
     }
-
-    if (lastIndex < text.length) {
-        append(text.substring(lastIndex))
-    }
+    if (lastIndex < text.length) append(text.substring(lastIndex))
 }
