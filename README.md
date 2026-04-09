@@ -32,6 +32,5 @@ Chatora is a smart chatbot app that lets you chat, ask questions, and interact n
 This project is licensed under the MIT License — feel free to use and adapt with attribution.
 
 ## 🙏 Acknowledgements
-- Inspired by Hindu mythology and cultural heritage.
 
 - Thanks to the open‑source community for tools and libraries.
